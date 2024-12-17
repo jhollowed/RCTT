@@ -1,4 +1,5 @@
 import os
+import sys
 import pdb
 import copy
 import cftime
@@ -12,6 +13,10 @@ import matplotlib.pyplot as plt
 # local imports
 import constants as const
 
+def printt(s, quiet, end=None):
+    if(not quiet):
+        print(s, end=end)
+        sys.stdout.flush()
 
 class RCTT:
     '''
@@ -34,9 +39,15 @@ class RCTT:
         None, in which case nothing is written out
     outprefix : string, optional
         string to append to the beginning out output file names in outdir
+    quiet : bool, optional
+        whether or not to suppress all print statements from this object. 
+        Defaults to False.
     '''
     
-    def __init__(self, vtem, wtem, trop, outdir=None, outprefix=''):
+    def __init__(self, vtem, wtem, trop, outdir=None, outprefix='', quiet=False):
+       
+        self.quiet  = quiet
+        self.printt = lambda s,end=None: printt(s, self.quiet, end=end)
         
         # check inputs
         assert('values' in vtem.__dir__()), 'vtem must be a DataArray'
@@ -51,13 +62,13 @@ class RCTT:
 
         # transpose input data to prefered order
         dim_order  = ('time', 'lat', 'plev')
-        print('transposing data as {} -> {}...'.format(vtem.dims, dim_order))
+        self.printt('transposing data as {} -> {}...'.format(vtem.dims, dim_order))
         self.vtem  = vtem.transpose(*dim_order) 
         self.wtem  = wtem.transpose(*dim_order) 
         self.trop  = trop.transpose(*dim_order[:-1])
 
         # get coords
-        print('getting data coordinates...')
+        self.printt('getting data coordinates...')
         self.latgr, self.plevgr        = vtem.lat, vtem.plev
         self.timegr                    = vtem.time
         # initial time
@@ -71,7 +82,7 @@ class RCTT:
 
         # convert tropopause and plev to geometric height, in meters
         # convert latitude to meters
-        print('converting variables from deg->meters, hPa->meters...')
+        self.printt('converting variables from deg->meters, hPa->meters...')
         self.plevgr_z = self.ptoz(self.plevgr)
         self.latgr_x  = self.lattox(self.latgr)
         self.minxgr, self.maxxgr = self.latgr_x.min(), self.latgr_x.max()
@@ -145,10 +156,10 @@ class RCTT:
                 rctt         = xr.open_dataset(rctt_outfile)['RCTT']
                 trajectories = xr.open_dataset(trajectory_outfile)
                 if(not overwrite):
-                    print('files exist and overwrite=False; reading data from files...')
+                    self.printt('files exist and overwrite=False; reading data from files...')
                     return rctt, trajectories
                 else:
-                    print('files exist but overwrite=True; computing RCTT and trajectories...')
+                    self.printt('files exist but overwrite=True; computing RCTT and trajectories...')
             except FileNotFoundError:
                 pass
 
@@ -157,7 +168,7 @@ class RCTT:
         rctt   = np.full((time.size, lat.size, plev.size), np.nan)
         rctt   = xr.DataArray(rctt, coords=coords)
         rctt.attrs['units'] = 'ndays'
-        print('allocated array of shape {} = {} for RCTT result...'.format(rctt.dims, rctt.shape))
+        self.printt('allocated array of shape {} = {} for RCTT result...'.format(rctt.dims, rctt.shape))
         
         # get trajectory launch points in time, and launch trajectories
         for i,t_launch in enumerate(np.atleast_1d(time)):
@@ -169,7 +180,7 @@ class RCTT:
                 t_end = self.grt0
             
             # get trajectory endpoints in time
-            print('---------- launching trajectories at time {}/{} with resday={} and '\
+            self.printt('---------- launching trajectories at time {}/{} with resday={} and '\
                   'age_limit={} ({:.2f} years from {} to {})...'.format(
                   i+1, time.size, resday, age_limit, (t_launch-t_end).days/365, 
                   t_launch.strftime("%Y-%m-%d"), t_end.strftime("%Y-%m-%d")))
@@ -262,7 +273,7 @@ class RCTT:
         # We are overriding this behavior and using raveled coordinate arrays by indexing with DataArrays
         # See here: https://docs.xarray.dev/en/latest/user-guide/interpolation.html#advanced-interpolation
         for i,ts in enumerate(timesteps[1:]):
-            if(i%10==0): print('timestep {}/{}...'.format(i+1, nt-1), end='\r')
+            if(i%10==0): self.printt('timestep {}/{}...'.format(i+1, nt-1), end='\r')
             # check if trajectory has left the domain; reset if so
             X = self._reset_coord(X, self.minxgr, self.maxxgr)
             Z = self._reset_coord(Z, self.minzgr, self.maxzgr)
@@ -293,18 +304,18 @@ class RCTT:
             trajectories[i+1,1,:] = Z
             
         # package resulting trajectory components into DataArrays
-        print('packaging result as DataArrays...')
+        self.printt('packaging result as DataArrays...')
         coords = {'time':timesteps, 'z':z, 'x':x}
         trajectories_x = xr.DataArray(trajectories[:,0,:].reshape(nt, nz, nx), coords=coords)
         trajectories_z = xr.DataArray(trajectories[:,1,:].reshape(nt, nz, nx), coords=coords)
 
         # compute trajectory tropopause crossing times; start by looping over each trajectory
         ncrossings = 0
-        print('searching for tropopause crossings...')
+        self.printt('searching for tropopause crossings...')
         for j in range(nx):
             for k in range(nz):
                 if((j*nz+k) % 10 == 0): 
-                    print('working on trajectory {}/{} ({} ages recorded)'.format(j*nz+k, N, ncrossings), end='\r')
+                    self.printt('working on trajectory {}/{} ({} ages recorded)'.format(j*nz+k, N, ncrossings), end='\r')
                 # get the next trajectory
                 trajectory_x = trajectories_x.isel(x=j, z=k)
                 trajectory_z = trajectories_z.isel(x=j, z=k)
@@ -352,7 +363,7 @@ class RCTT:
                 trajectories_z[:,k,j] = trajectory_z.where(trajectory_z.time > crossing_time)
 
         # convert back to latitude and pressure, return
-        print('converting from meters back to latitude, hPa...     ')
+        self.printt('converting from meters back to latitude, hPa...     ')
         coords = {'time':timesteps, 'plev':plev, 'lat':lat}
         trajectories_x = xr.DataArray(self.xtolat(trajectories_x.values), coords=coords)
         trajectories_z = xr.DataArray(self.ztop(trajectories_z.values), coords=coords)
