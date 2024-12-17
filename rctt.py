@@ -43,12 +43,14 @@ class RCTT:
         assert('values' in wtem.__dir__()), 'wtem must be a DataArray'
         assert('values' in trop.__dir__()), 'trop must be a DataArray'
 
-        # configuration
+        # output file naming configuration
         self.outdir    = outdir
         self.outprefix = outprefix
-        dim_order  = ('time', 'lat', 'plev') # dimension ordering transpose order for input data
+        if(self.outprefix is not None and self.outprefix[-1]!='_'): 
+            self.outprefix = self.outprefix + '_'
 
         # transpose input data to prefered order
+        dim_order  = ('time', 'lat', 'plev')
         print('transposing data as {} -> {}...'.format(vtem.dims, dim_order))
         self.vtem  = vtem.transpose(*dim_order) 
         self.wtem  = wtem.transpose(*dim_order) 
