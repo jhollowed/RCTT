@@ -1,3 +1,4 @@
+import os
 import pdb
 import copy
 import cftime
@@ -28,8 +29,6 @@ class RCTT:
     trop: xarray DataArray
         tropopause pressure at each latitude, in Pa. These are the positions 
         that will be used to determine endpoints of each trajectory
-    resday : int
-        time resolution of trajectory calculation, in days
     outdir : string, optional
         output path for resulting RCTT and trajectory netcdf files. Default is
         None, in which case nothing is written out
@@ -37,7 +36,7 @@ class RCTT:
         string to append to the beginning out output file names in outdir
     '''
     
-    def __init__(self, vtem, wtem, trop, resday=5, outdir=None, outprefix=''):
+    def __init__(self, vtem, wtem, trop, outdir=None, outprefix=''):
         
         # check inputs
         assert('values' in vtem.__dir__()), 'vtem must be a DataArray'
@@ -47,7 +46,6 @@ class RCTT:
         # configuration
         self.outdir    = outdir
         self.outprefix = outprefix
-        self.resday    = resday
         dim_order  = ('time', 'lat', 'plev') # dimension ordering transpose order for input data
 
         # transpose input data to prefered order
@@ -90,7 +88,7 @@ class RCTT:
         
     # ------------------------------------------------------------------------------------
 
-    def launch(self, lat, plev, time, age_limit=None, overwrite=False): 
+    def launch(self, lat, plev, time, resday=None, age_limit=None, overwrite=False): 
         '''
         Computes residual circulation transit trajectories for a given set of launch points
         in the meridional plane. Trajectory launch points are specified in latitude, pressure, 
@@ -105,6 +103,9 @@ class RCTT:
         time : xarray DataArray
             time positions of trajectory launch points, as datetime objects, 
             in ascending order
+        resday : float, optional
+            integration timestep (trajectory resolution), in days. 
+            Defaults to 5 days.
         age_limit : float, optional
             upper limit for trajectory lengths, in years. Default is None, in which 
             case all trajcetories are integrated from the launch times to the beginning 
@@ -124,35 +125,40 @@ class RCTT:
         assert(min(plev) >= self.plevgr.min()), "min(launch plev) must be >= min(data plev)!"
         assert(max(plev) <= self.plevgr.max()), "max(launch plev) must be <= max(data plev)!"
         assert('values' in lat.__dir__()),  'lat must be a DataArray'
-        assert('values' in plev.__dir__()),  'plev must be a DataArray'
+        assert('values' in plev.__dir__()), 'plev must be a DataArray'
         assert('values' in time.__dir__()), 'time must be a DataArray'
-        
+ 
         # attempt to read result from file, return or overwrite
         if(self.outdir is not None):
-            rctt_outfile = '{}/{}RCTT_{}--{}_ageLimit{}.nc'.format(self.outdir, self.outprefix, 
-                           time.values[0].strftime("%Y-%m-%d"), time.values[-1].strftime("%Y-%m-%d"), age_limit)
-            trajectory_outfile = '{}/{}Trajectories_{}--{}_ageLimit{}.nc'.format(self.outdir, self.outprefix, 
-                                 time.values[0].strftime("%Y-%m-%d"), time.values[-1].strftime("%Y-%m-%d"), age_limit)
+            if(time.size == 1):
+                tstr = '{}'.format(time.item().strftime("%Y-%m-%d"))
+            else:
+                tstr = '{}--{}'.format(time.values[0].strftime("%Y-%m-%d"), 
+                                       time.values[-1].strftime("%Y-%m-%d"))
+            rctt_outfile = '{}/{}RCTT_{}_ageLimit{}_res{}.nc'.format(
+                           self.outdir, self.outprefix, tstr, age_limit, resday)
+            trajectory_outfile = '{}/{}Trajectories_{}_ageLimit{}_res{}.nc'.format(
+                                 self.outdir, self.outprefix, tstr, age_limit, resday)
             try:
                 rctt         = xr.open_dataset(rctt_outfile)['RCTT']
                 trajectories = xr.open_dataset(trajectory_outfile)
+                if(not overwrite):
+                    print('files exist and overwrite=False; reading data from files...')
+                    return rctt, trajectories
+                else:
+                    print('files exist but overwrite=True; computing RCTT and trajectories...')
             except FileNotFoundError:
                 pass
-            if(not overwrite):
-                print('files exist and overwrite=False; reading data from files...')
-                return rctt, trajectories
-            else:
-                print('files exist but overwrite=True; computing RCTT and trajectories...') 
 
         # allocate RCTT with nans
-        coords = {'time':time, 'lat':lat, 'plev':plev}
-        rctt   = np.full((len(time), len(lat), len(plev)), np.nan)
+        coords = {'time':np.atleast_1d(time), 'lat':lat, 'plev':plev}
+        rctt   = np.full((time.size, lat.size, plev.size), np.nan)
         rctt   = xr.DataArray(rctt, coords=coords)
         rctt.attrs['units'] = 'days'
         print('allocated array of shape {} = {} for RCTT result...'.format(rctt.dims, rctt.shape))
         
         # get trajectory launch points in time, and launch trajectories
-        for i,t_launch in enumerate(time.values):
+        for i,t_launch in enumerate(np.atleast_1d(time)):
         
             # get launch end time
             if(age_limit is not None and age_limit < (t_launch-self.grt0).days/365):
@@ -161,11 +167,13 @@ class RCTT:
                 t_end = self.grt0
             
             # get trajectory endpoints in time
-            print('---------- launching trajectories at time {}/{} with age_limit={} ({:.2f} years from {} to {})...'.format(
-                        i, len(time), age_limit, (t_launch-t_end).days/365, t_launch.strftime("%Y-%m-%d"), t_end.strftime("%Y-%m-%d")))
+            print('---------- launching trajectories at time {}/{} with resday={} and '\
+                  'age_limit={} ({:.2f} years from {} to {})...'.format(
+                  i+1, time.size, resday, age_limit, (t_launch-t_end).days/365, 
+                  t_launch.strftime("%Y-%m-%d"), t_end.strftime("%Y-%m-%d")))
             
             # call trajectory solver
-            tlat, tplev = self._solve_trajectories(rctt[i,:,:], lat, plev, t_launch, t_end)
+            tlat, tplev = self._solve_trajectories(rctt[i,:,:], lat, plev, t_launch, t_end, h=resday)
 
             # concatenate trajectories in launch time
             if(i == 0):
@@ -179,6 +187,10 @@ class RCTT:
         
         # write out result
         if(self.outdir is not None):
+            if(overwrite and os.path.exists(rctt_outfile)):
+                os.remove(rctt_outfile)
+            if(overwrite and os.path.exists(trajectory_outfile)):
+                os.remove(trajectory_outfile)
             xr.Dataset({'RCTT':rctt}).to_netcdf(rctt_outfile)
             trajectories.to_netcdf(trajectory_outfile)
         
@@ -215,13 +227,13 @@ class RCTT:
         ti : xarray DataArray
             termination points time, in seconds
         h : float, optional
-            timestep of integration, in seconds. Defaults to resday, defined at
-            object initialization
+            timestep of integration, in days. Defaults to 5 days
         '''
        
         # ---- setup
         # set default timestep
-        if(h is None): h = self.resday * 60*60*24
+        if(h is None): h = 5
+        h *= 60*60*24
         # get trajectory launch points in geometric x,z
         x     = self.lattox(lat.values)
         z     = self.ptoz(plev.values)
@@ -260,7 +272,7 @@ class RCTT:
             k3   = h * -self.vtem_xz.interp(time=ts+timedelta(seconds=h/2)).interp(x=Xk2, z=Z)
             Xk3  = self._reset_coord(X+k3, self.minxgr, self.maxxgr)
             k4   = h * -self.vtem_xz.interp(time=ts+timedelta(seconds=h)).interp(x=Xk3, z=Z)
-            Xnew = X + (1/6)*(k1+k2+k3+k4)
+            Xnew = X + k1/6 + k2/3 + k3/3 + k4/6
             # do Runge-Kutta in y (pressure)
             k1  = h * -self.wtem_xz.interp(time=ts).interp(x=X, z=Z)
             Zk1 = self._reset_coord(Z+k1/2, self.minzgr, self.maxzgr) 
@@ -269,7 +281,7 @@ class RCTT:
             k3  = h * -self.wtem_xz.interp(time=ts+timedelta(seconds=h/2)).interp(x=X, z=Zk2)
             Zk3 = self._reset_coord(Z+k3, self.minzgr, self.maxzgr)
             k4  = h * -self.wtem_xz.interp(time=ts+timedelta(seconds=h)).interp(x=X, z=Zk3)
-            Z   = Z + (1/6)*(k1+k2+k3+k4)
+            Z   = Z + k1/6 + k2/3 + k3/3 + k4/6
             X   = Xnew
             # check if trajectory has left the domain; reset if so
             X = self._reset_coord(X, self.minxgr, self.maxxgr)
@@ -334,23 +346,7 @@ class RCTT:
         coords = {'time':timesteps, 'plev':plev, 'lat':lat}
         trajectories_x = xr.DataArray(self.xtolat(trajectories_x.values), coords=coords)
         trajectories_z = xr.DataArray(self.ztop(trajectories_z.values), coords=coords)
-        
-        debug_plot=False
-        if(debug_plot):
-            plt.plot(trajectories_x.sel(lat=0, plev=self.ztop(30*1e3), method='nearest'), trajectories_z.sel(lat=0, plev=self.ztop(30*1e3), method='nearest'))
-            plt.plot(trajectories_x.sel(lat=45, plev=self.ztop(30*1e3), method='nearest'), trajectories_z.sel(lat=45, plev=self.ztop(30*1e3), method='nearest'))
-            plt.plot(trajectories_x.sel(lat=85, plev=self.ztop(10*1e3), method='nearest'), trajectories_z.sel(lat=85, plev=self.ztop(10*1e3), method='nearest'))
-            plt.plot(trajectories_x.sel(lat=85, plev=self.ztop(25*1e3), method='nearest'), trajectories_z.sel(lat=85, plev=self.ztop(25*1e3), method='nearest'))
-            print((rctt.T/365).min())
-            print((rctt.T/365).max())
-            cf = plt.contourf(lat, plev, rctt.T/365, levels=[0,1,2,3,4,5,6,7,8,9,10], cmap='viridis', extend='both')
-            plt.colorbar(cf)
-            plt.gca().set_yscale('log')
-            plt.gca().invert_yaxis()
-            #plt.grid()
-            plt.show()
-            #pdb.set_trace()
-        
+         
         return trajectories_x, trajectories_z
     
     # ------------------------------------------------------------------------------------
