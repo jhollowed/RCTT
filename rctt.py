@@ -154,7 +154,7 @@ class RCTT:
         coords = {'time':np.atleast_1d(time), 'lat':lat, 'plev':plev}
         rctt   = np.full((time.size, lat.size, plev.size), np.nan)
         rctt   = xr.DataArray(rctt, coords=coords)
-        rctt.attrs['units'] = 'days'
+        rctt.attrs['units'] = 'ndays'
         print('allocated array of shape {} = {} for RCTT result...'.format(rctt.dims, rctt.shape))
         
         # get trajectory launch points in time, and launch trajectories
@@ -322,6 +322,14 @@ class RCTT:
                 # if the launch point is in the stratosphere, see if an intersection occurs. 
                 # If not,then we set RCTT=nan and the trajectories to nan
                 z_diff = trajectory_z - trop_z
+
+                debug_trajectories=False
+                if(debug_trajectories):
+                    to_datetime = lambda times: [datetime(t.year, t.month, t.day) for t in times]
+                    plt.plot(to_datetime(timesteps), trajectory_z, '-r')
+                    plt.plot(to_datetime(timesteps), trop_z, '-k')
+                    plt.show()
+
                 crossings = np.where(np.diff(np.sign(z_diff)) != 0)[0]
                 if(len(crossings) == 0):
                     rctt[j,k] = np.nan
@@ -335,7 +343,7 @@ class RCTT:
                 t1, t2 = timesteps[cross_idx], timesteps[cross_idx+1]
                 z1, z2 = z_diff[cross_idx], z_diff[cross_idx+1]
                 crossing_time  = t1 + timedelta(float((-z1 / (z2-z1) * (t2-t1).days)))
-                age            = (t - crossing_time).total_seconds() / (24*60*60)
+                age            = float((t - crossing_time).total_seconds() / (24*60*60))
                 rctt[j,k] = age 
                 ncrossings += 1
                 trajectories_x[:,k,j] = trajectory_x.where(trajectory_x.time > crossing_time)
