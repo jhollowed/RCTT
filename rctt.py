@@ -195,8 +195,14 @@ class RCTT:
             else:
                 trajectories_lat  = xr.concat([trajectories_lat, tlat], dim='time')
                 trajectories_plev = xr.concat([trajectories_plev, tlat], dim='time')
-            trajectories = xr.Dataset({'trajectories_lat' : trajectories_lat, 
-                                       'trajectories_plev': trajectories_plev})
+       
+        # combine trajectory components to dataset
+        # dimension time gives the launch time
+        # dimension timestep gives the times of each step along the trajectory
+        trajectories_lat  = trajectories_lat.assign_coords(time=time)
+        trajectories_plev = trajectories_plev.assign_coords(time=time)
+        trajectories = xr.Dataset({'trajectories_lat' : trajectories_lat, 
+                                   'trajectories_plev': trajectories_plev})
         
         # write out result
         if(self.outdir is not None):
@@ -305,7 +311,7 @@ class RCTT:
             
         # package resulting trajectory components into DataArrays
         self.printt('packaging result as DataArrays...')
-        coords = {'time':timesteps, 'z':z, 'x':x}
+        coords = {'timestep':timesteps, 'z':z, 'x':x}
         trajectories_x = xr.DataArray(trajectories[:,0,:].reshape(nt, nz, nx), coords=coords)
         trajectories_z = xr.DataArray(trajectories[:,1,:].reshape(nt, nz, nx), coords=coords)
 
@@ -327,7 +333,7 @@ class RCTT:
                 # now we want to find where trop_z and the tropopause intersect.
                 # first check if the launch point was already in the troposphere, in which case 
                 # we set RCTT=0 and set the trajectories to nan
-                if(trajectory_z.isel(time=0) < trop_z.isel(time=0)):
+                if(trajectory_z.isel(timestep=0) < trop_z.isel(time=0)):
                     rctt[j,k] = 0
                     trajectories_x[:,k,j] = np.nan
                     trajectories_z[:,k,j] = np.nan
@@ -359,12 +365,12 @@ class RCTT:
                 age            = float((t - crossing_time).total_seconds() / (24*60*60))
                 rctt[j,k] = age 
                 ncrossings += 1
-                trajectories_x[:,k,j] = trajectory_x.where(trajectory_x.time > crossing_time)
-                trajectories_z[:,k,j] = trajectory_z.where(trajectory_z.time > crossing_time)
+                trajectories_x[:,k,j] = trajectory_x.where(trajectory_x.timestep > crossing_time)
+                trajectories_z[:,k,j] = trajectory_z.where(trajectory_z.timestep > crossing_time)
 
         # convert back to latitude and pressure, return
         self.printt('converting from meters back to latitude, hPa...     ')
-        coords = {'time':timesteps, 'plev':plev, 'lat':lat}
+        coords = {'timestep':timesteps, 'plev':plev, 'lat':lat}
         trajectories_x = xr.DataArray(self.xtolat(trajectories_x.values), coords=coords)
         trajectories_z = xr.DataArray(self.ztop(trajectories_z.values), coords=coords)
          
