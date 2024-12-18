@@ -361,7 +361,7 @@ class RCTT:
                 cross_idx = crossings[0]
                 t1, t2 = timesteps[cross_idx], timesteps[cross_idx+1]
                 z1, z2 = z_diff[cross_idx], z_diff[cross_idx+1]
-                ossing_time  = t1 + timedelta(float((-z1 / (z2-z1) * (t2-t1).days)))
+                crossing_time  = t1 + timedelta(float((-z1 / (z2-z1) * (t2-t1).days)))
                 age          = float((t - crossing_time).total_seconds() / (24*60*60))
                 rctt[j,k] = age 
                 ncrossings += 1
