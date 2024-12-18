@@ -327,13 +327,13 @@ class RCTT:
                 trajectory_z = trajectories_z.isel(x=j, z=k)
                 # interpolate tropopause to trajectory latitudes and timesteps
                 trop_z = self.trop_z.interp(time=timesteps, x=trajectory_x.values)
-                # get 1D time series of the tropopause in z
+                # get 1D time series of the tropopause in z, rename time to timestep
                 trop_z = xr.DataArray(np.array([trop_z.isel(time=ll, x=ll).values for ll in range(nt)]), 
-                                      coords={'time':trop_z.time})
+                                      coords={'timestep':trop_z.time.values})
                 # now we want to find where trop_z and the tropopause intersect.
                 # first check if the launch point was already in the troposphere, in which case 
                 # we set RCTT=0 and set the trajectories to nan
-                if(trajectory_z.isel(timestep=0) < trop_z.isel(time=0)):
+                if(trajectory_z.isel(timestep=0) < trop_z.isel(timestep=0)):
                     rctt[j,k] = 0
                     trajectories_x[:,k,j] = np.nan
                     trajectories_z[:,k,j] = np.nan
