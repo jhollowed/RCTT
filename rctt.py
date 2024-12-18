@@ -199,8 +199,8 @@ class RCTT:
         # combine trajectory components to dataset
         # dimension time gives the launch time
         # dimension timestep gives the times of each step along the trajectory
-        trajectories_lat  = trajectories_lat.assign_coords(time=time)
-        trajectories_plev = trajectories_plev.assign_coords(time=time)
+        trajectories_lat  = trajectories_lat.assign_coords(time=time.values)
+        trajectories_plev = trajectories_plev.assign_coords(time=time.values)
         trajectories = xr.Dataset({'trajectories_lat' : trajectories_lat, 
                                    'trajectories_plev': trajectories_plev})
         
@@ -361,8 +361,8 @@ class RCTT:
                 cross_idx = crossings[0]
                 t1, t2 = timesteps[cross_idx], timesteps[cross_idx+1]
                 z1, z2 = z_diff[cross_idx], z_diff[cross_idx+1]
-                crossing_time  = t1 + timedelta(float((-z1 / (z2-z1) * (t2-t1).days)))
-                age            = float((t - crossing_time).total_seconds() / (24*60*60))
+                ossing_time  = t1 + timedelta(float((-z1 / (z2-z1) * (t2-t1).days)))
+                age          = float((t - crossing_time).total_seconds() / (24*60*60))
                 rctt[j,k] = age 
                 ncrossings += 1
                 trajectories_x[:,k,j] = trajectory_x.where(trajectory_x.timestep > crossing_time)
