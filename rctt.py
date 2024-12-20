@@ -1,8 +1,11 @@
 import os
 import sys
 import pdb
+import zarr
 import copy
 import cftime
+import sparse
+import shutil
 import numpy as np
 import xarray as xr
 from scipy import integrate
@@ -101,8 +104,8 @@ class RCTT:
         
     # ------------------------------------------------------------------------------------
 
-    def launch(self, lat, plev, time, resday=None, age_limit=None, overwrite=False, 
-               keep_all_trajectories=False, traj_downsample_fac=None): 
+    def launch(self, lat, plev, time, res_day=None, age_limit=None, overwrite=False, 
+               keep_all_trajectories=False, traj_downs=None): 
         '''
         Computes residual circulation transit trajectories for a given set of launch points
         in the meridional plane. Trajectory launch points are specified in latitude, pressure, 
@@ -116,7 +119,7 @@ class RCTT:
             pressure positions of trajectory launch points, in hPa
         time : float or float array
             time positions of trajectory launch points, as datetime objects 
-        resday : float, optional
+        res_day : float, optional
             integration timestep (trajectory resolution), in days. 
             Defaults to 5 days.
         age_limit : float, optional
@@ -135,7 +138,7 @@ class RCTT:
             sites that do not reach the tropopause by time ti. Defaults to
             False, in which case incomplete trajectory data is replaced with
             nans
-        traj_downsample_fac : int, optional
+        traj_downs : int, optional
             downsample factor for output trajectories. Must be an integer. 
             Default is none, in which case the trajectories will be written out at 
             their integration resolution (reday)
@@ -160,19 +163,22 @@ class RCTT:
             else:
                 tstr = '{}--{}'.format(time.values[0].strftime("%Y-%m-%d"), 
                                        time.values[-1].strftime("%Y-%m-%d"))
-            rctt_outfile = '{}/{}RCTT_{}_ageLimit{}_res{}.nc'.format(
-                           self.outdir, self.outprefix, tstr, age_limit, resday)
-            trajectory_outfile = '{}/{}Trajectories_{}_ageLimit{}_res{}.nc'.format(
-                                 self.outdir, self.outprefix, tstr, age_limit, resday)
+            keep_str  = ['', '_allTrajectoriesKept'][keep_all_trajectories]
+            downs_str = ['', '_{}xDownsample'.format(traj_downs)][traj_downs is not None]
+            rctt_outfile = '{}/{}RCTT_{}_ageLimit{}y_res{}d.nc'.format(
+                           self.outdir, self.outprefix, tstr, age_limit, res_day)
+            trajectory_outfile = '{}/{}Trajectories_{}_ageLimit{}y_res{}d{}{}.zarr'.format(
+                                 self.outdir, self.outprefix, tstr, age_limit, 
+                                 res_day, keep_str, downs_str)
             try:
                 rctt         = xr.open_dataset(rctt_outfile)['RCTT']
-                trajectories = xr.open_dataset(trajectory_outfile)
+                trajectories = xr.open_dataset(trajectory_outfile, engine='zarr')
                 if(not overwrite):
                     self.printt('files exist and overwrite=False; reading data from files...')
                     return rctt, trajectories
                 else:
                     self.printt('files exist but overwrite=True; computing RCTT and trajectories...')
-            except FileNotFoundError:
+            except (zarr.errors.GroupNotFoundError, FileNotFoundError) as error:
                 pass
 
         # allocate RCTT with nans
@@ -190,11 +196,14 @@ class RCTT:
             else:
                 end_time[i] = self.grt0
         end_time = xr.DataArray(end_time, dims={'time':end_time})
-        # build global timestepping array
+        # build global timestepping array for trajectory output, with optional downsampling
         t,ti      = time.max().item(), end_time.min().item()
         dt        = (t-ti).days
-        timesteps = np.array([t-timedelta(days=resday*i) for i in range(int(dt/resday)+1)])
-        # because a grid of uniform timesteps of size resday over the full range
+        timesteps = np.array([t-timedelta(days=res_day*i) for i in range(int(dt/res_day)+1)])
+        if(traj_downs is not None):
+            print('configuring trajectory output grid with {}x downsampling...'.format(traj_downs))
+            timesteps = timesteps[::traj_downs]
+        # because a grid of uniform timesteps of size res_day over the full range
         # of launch times and end times may not include all of the launch time
         # and end times themselves, insert them. This global grid is used for
         # outputting the trajectory information only, and is not used in the 
@@ -209,13 +218,13 @@ class RCTT:
             t_launch, t_end = time[i].item(), end_time[i].item()
             
             # get trajectory endpoints in time
-            self.printt('---------- launching trajectories at time {}/{} with resday={} and '\
+            self.printt('---------- launching trajectories at time {}/{} with res_day={} and '\
                   'age_limit={} ({:.2f} years from {} to {})...'.format(
-                  i+1, time.size, resday, age_limit, (t_launch-t_end).days/365, 
+                  i+1, time.size, res_day, age_limit, (t_launch-t_end).days/365, 
                   t_launch.strftime("%Y-%m-%d"), t_end.strftime("%Y-%m-%d")))
             
             # call trajectory solver
-            tlat, tplev = self._solve_trajectories(rctt[i,:,:], lat, plev, t_launch, t_end, resday, keep_all_trajectories)
+            tlat, tplev = self._solve_trajectories(rctt[i,:,:], lat, plev, t_launch, t_end, res_day, keep_all_trajectories)
 
             # interpolate trajectory timesteps to global timestep grid, and concatenate
             # dimension launch_time gives the launch time of the trajectory at each (lat,plev)
@@ -229,23 +238,25 @@ class RCTT:
                 trajectories_lat  = xr.concat([trajectories_lat, tlat], dim='launch_time')
                 trajectories_plev = xr.concat([trajectories_plev, tplev], dim='launch_time')
         
-        # combine trajectory components to dataset
-        trajectories_lat  = trajectories_lat.assign_coords(launch_time=time.values)
-        trajectories_plev = trajectories_plev.assign_coords(launch_time=time.values)
-        trajectories = xr.Dataset({'trajectories_lat' : trajectories_lat, 
-                                   'trajectories_plev': trajectories_plev})
-        if(traj_downsample_fac is not None):
-            trajectories = trajectories.isel(timestep=slice(None,None,2))
-        
+        # finally, combine trajectory components to dataset
+        # in the way we have structured it, the trajectory data is largely nans
+        # convert this to a sparse representation for return and file output
+        trajectories_lat     = trajectories_lat.assign_coords(launch_time=time.values)
+        trajectories_plev    = trajectories_plev.assign_coords(launch_time=time.values)
+        out_dims, out_coords = trajectories_lat.dims, trajectories_lat.coords
+        trajectories_lat  = trajectories_lat.map_blocks(lambda x: sparse.COO.from_numpy(x.data).todense())
+        trajectories_plev = trajectories_plev.map_blocks(lambda x: sparse.COO.from_numpy(x.data).todense())
+        trajectories      = xr.Dataset({'trajectories_lat' : (out_dims, trajectories_lat), 
+                                        'trajectories_plev': (out_dims, trajectories_plev)}, 
+                                        coords=out_coords) 
         # write out result
         if(self.outdir is not None):
             if(overwrite and os.path.exists(rctt_outfile)):
                 os.remove(rctt_outfile)
             if(overwrite and os.path.exists(trajectory_outfile)):
-                os.remove(trajectory_outfile)
-            rctt = xr.Dataset({'RCTT':rctt})
-            rctt.to_netcdf(rctt_outfile)
-            trajectories.to_netcdf(trajectory_outfile)
+                shutil.rmtree(trajectory_outfile)
+            xr.Dataset({'RCTT':rctt}).to_netcdf(rctt_outfile)
+            trajectories.to_zarr(trajectory_outfile, mode='w')
         
         # return
         return rctt, trajectories
