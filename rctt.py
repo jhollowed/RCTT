@@ -189,10 +189,10 @@ class RCTT:
         self.printt('allocated array of shape {} = {} for RCTT result...'.format(rctt.dims, rctt.shape))
 
         # build mapping between launch times and end times
-        end_time = [[]]*time.size
+        end_time = [None]*time.size
         for i in range(time.size):
             if(age_limit is not None and age_limit < (time.values[i]-self.grt0).days/365):
-                end_time[i] = type(self.grt0)(time[i].year - age_limit, time[i].month, time[i].day)
+                end_time[i] = type(self.grt0)(time.values[i].year - age_limit, time.values[i].month, time.values[i].day)
             else:
                 end_time[i] = self.grt0
         end_time = xr.DataArray(end_time, dims={'time':end_time})

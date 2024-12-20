@@ -21,10 +21,10 @@ launch_plev = xr.DataArray(launch_plev, coords={'plev':launch_plev})
 launch_times = vtem.time.sel(time=data['time.month']==1)
 launch_times = launch_times.sel(time=launch_times['time.year']>1995)
 
-overwrite=False
+overwrite=True
 keep_all=False
 downsample=2
-age_limit = 10 
+age_limit = 1 
 res_day = 20
 rctt = RCTT(vtem, wtem, trop, outdir='/Users/joe/repos/RCTT/outputs', outprefix='limvar_ens1_cf')
 ttimes, traj = rctt.launch(launch_lats, launch_plev, launch_times, overwrite=overwrite, 
