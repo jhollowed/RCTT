@@ -230,8 +230,8 @@ class RCTT:
             # dimension launch_time gives the launch time of the trajectory at each (lat,plev)
             # dimension timestep gives the times of each step along the trajectory
             if(i==0):
-                trajectories_lat  = tlat.interp(timestep=timesteps)
-                trajectories_plev = tplev.interp(timestep=timesteps)
+                trajectories_lat  = tlat.interp(timestep=timesteps).expand_dims('launch_time')
+                trajectories_plev = tplev.interp(timestep=timesteps).expand_dims('launch_time')
             if(i>0):
                 tlat  = tlat.interp(timestep=timesteps)
                 tplev = tplev.interp(timestep=timesteps)
