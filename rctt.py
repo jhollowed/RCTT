@@ -201,7 +201,7 @@ class RCTT:
         dt        = (t-ti).days
         timesteps = np.array([t-timedelta(days=res_day*i) for i in range(int(dt/res_day)+1)])
         if(traj_downs is not None):
-            print('configuring trajectory output grid with {}x downsampling...'.format(traj_downs))
+            self.printt('configuring trajectory output grid with {}x downsampling...'.format(traj_downs))
             timesteps = timesteps[::traj_downs]
         # because a grid of uniform timesteps of size res_day over the full range
         # of launch times and end times may not include all of the launch time
